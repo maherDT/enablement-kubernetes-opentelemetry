@@ -726,16 +726,148 @@ opentelemetry-collector:
           - endpoint: 'http://{{ include "otel-demo.name" . }}-frontendproxy:8080'
 
     exporters:
-      # Dynatrace OTel Collector
-      otlphttp/dynatrace:
-        endpoint: http://dynatrace-deployment-collector.dynatrace.svc.cluster.local:4318
+      otlphttp/bindplane:
+        endpoint: http://bindplane-gateway-agent.bindplane-agent.svc.cluster.local:4319
 
     processors:
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.deployment.name
+            - k8s.daemonset.name
+            - k8s.job.name
+            - k8s.cronjob.name
+            - k8s.replicaset.name
+            - k8s.statefulset.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.container.name
+            - container.id
+            - container.image.name
+            - container.image.tag
+          labels:
+            - tag_name: app.label.component
+              key: app.kubernetes.io/component
+              from: pod
+            - tag_name: app.label.instance
+              key: app.kubernetes.io/instance
+              from: pod
+            - tag_name: app.label.name
+              key: app.kubernetes.io/name
+              from: pod
+          annotations:
+            - tag_name: metadata.dynatrace.com
+              key: metadata.dynatrace.com
+              from: pod
+            - tag_name: app.annotation.service.namespace
+              key: instrumentation.opentelemetry.io/service.namespace
+              from: pod
+            - tag_name: app.annotation.service.name
+              key: instrumentation.opentelemetry.io/service.name
+              from: pod
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.name
+          - sources:
+              - from: connection
+      resourcedetection/gcp:
+        detectors: [env]
+        timeout: 2s
+        override: false
+      resource/kind:
+        attributes:
+          - key: k8s.cluster.name
+            value: k3d-enablement
+            action: insert
+      transform/dynatrace-k8s:
+        error_mode: ignore
+        trace_statements:
+          - context: resource
+            statements:
+              - merge_maps(attributes, ParseJSON(attributes["metadata.dynatrace.com"]), "upsert") where IsMatch(attributes["metadata.dynatrace.com"], "^\\{")
+              - delete_key(attributes, "metadata.dynatrace.com")
+              - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.kind"], "daemonset") where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "statefulset") where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "deployment") where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "replicaset") where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "cronjob") where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "job") where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["dt.kubernetes.workload.name"], attributes["k8s.workload.name"]) where IsString(attributes["k8s.workload.name"])
+              - set(attributes["dt.kubernetes.workload.kind"], attributes["k8s.workload.kind"]) where IsString(attributes["k8s.workload.kind"])
+        metric_statements:
+          - context: resource
+            statements:
+              - merge_maps(attributes, ParseJSON(attributes["metadata.dynatrace.com"]), "upsert") where IsMatch(attributes["metadata.dynatrace.com"], "^\\{")
+              - delete_key(attributes, "metadata.dynatrace.com")
+              - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.kind"], "daemonset") where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "statefulset") where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "deployment") where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "replicaset") where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "cronjob") where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "job") where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["dt.kubernetes.workload.name"], attributes["k8s.workload.name"]) where IsString(attributes["k8s.workload.name"])
+              - set(attributes["dt.kubernetes.workload.kind"], attributes["k8s.workload.kind"]) where IsString(attributes["k8s.workload.kind"])
+        log_statements:
+          - context: resource
+            statements:
+              - merge_maps(attributes, ParseJSON(attributes["metadata.dynatrace.com"]), "upsert") where IsMatch(attributes["metadata.dynatrace.com"], "^\\{")
+              - delete_key(attributes, "metadata.dynatrace.com")
+              - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.kind"], "daemonset") where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "statefulset") where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "deployment") where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "replicaset") where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "cronjob") where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "job") where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["dt.kubernetes.workload.name"], attributes["k8s.workload.name"]) where IsString(attributes["k8s.workload.name"])
+              - set(attributes["dt.kubernetes.workload.kind"], attributes["k8s.workload.kind"]) where IsString(attributes["k8s.workload.kind"])
       resource:
         attributes:
-        - key: service.instance.id
-          from_attribute: k8s.pod.uid
-          action: insert
+          - key: k8s.pod.ip
+            action: delete
+          - key: telemetry.sdk.name
+            value: opentelemetry
+            action: insert
+          - key: dynatrace.otel.collector
+            value: astronomy-shop-otelcol
+            action: insert
+          - key: dt.security_context
+            from_attribute: k8s.cluster.name
+            action: insert
+          - key: service.instance.id
+            from_attribute: k8s.pod.uid
+            action: insert
+      filter/histogram:
+        error_mode: ignore
+        metrics:
+          metric:
+            - 'type == METRIC_DATA_TYPE_HISTOGRAM'
+      cumulativetodelta: {}
 
     connectors:
       spanmetrics: {}
@@ -744,15 +876,19 @@ opentelemetry-collector:
       pipelines:
         traces:
           receivers: [otlp]
-          processors: [memory_limiter, resource, batch]
-          exporters: [spanmetrics, otlphttp/dynatrace]
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [spanmetrics, otlphttp/bindplane]
         metrics:
           receivers: [httpcheck/frontendproxy, otlp, spanmetrics]
-          processors: [memory_limiter, resource, batch]
-          exporters: [otlphttp/dynatrace]
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [otlphttp/bindplane]
+        metrics/collector-health:
+          receivers: [prometheus]
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, filter/histogram, cumulativetodelta, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [otlphttp/bindplane]
         logs:
-          processors: [memory_limiter, resource, batch]
-          exporters: [otlphttp/dynatrace]
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [otlphttp/bindplane]
 
 jaeger:
   enabled: false

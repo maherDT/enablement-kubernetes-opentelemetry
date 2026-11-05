@@ -1,0 +1,206 @@
+opentelemetry-collector:
+  image:
+    repository: "otel/opentelemetry-collector-contrib"
+  enabled: true
+  nameOverride: otelcol
+  mode: deployment
+  presets:
+    kubernetesAttributes:
+      enabled: true
+  resources:
+    limits:
+      memory: 300Mi
+  service:
+    type: ClusterIP
+  ports:
+    metrics:
+      enabled: true
+    prometheus:
+      enabled: true
+      containerPort: 9464
+      servicePort: 9464
+      protocol: TCP
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "9464"
+    opentelemetry_community_demo: "true"
+  config:
+    receivers:
+      otlp:
+        protocols:
+          http:
+            # Since this collector needs to receive data from the web, enable cors for all origins
+            # `allowed_origins` can be refined for your deployment domain
+            cors:
+              allowed_origins:
+                - "http://*"
+                - "https://*"
+      httpcheck/frontendproxy:
+        targets:
+          - endpoint: 'http://{{ include "otel-demo.name" . }}-frontendproxy:8080'
+
+    exporters:
+      otlphttp/bindplane:
+        endpoint: http://bindplane-gateway-agent.bindplane-agent.svc.cluster.local:4319
+
+    processors:
+      k8sattributes:
+        auth_type: serviceAccount
+        passthrough: false
+        extract:
+          metadata:
+            - k8s.namespace.name
+            - k8s.deployment.name
+            - k8s.daemonset.name
+            - k8s.job.name
+            - k8s.cronjob.name
+            - k8s.replicaset.name
+            - k8s.statefulset.name
+            - k8s.pod.name
+            - k8s.pod.uid
+            - k8s.node.name
+            - k8s.container.name
+            - container.id
+            - container.image.name
+            - container.image.tag
+          labels:
+            - tag_name: app.label.component
+              key: app.kubernetes.io/component
+              from: pod
+            - tag_name: app.label.instance
+              key: app.kubernetes.io/instance
+              from: pod
+            - tag_name: app.label.name
+              key: app.kubernetes.io/name
+              from: pod
+          annotations:
+            - tag_name: metadata.dynatrace.com
+              key: metadata.dynatrace.com
+              from: pod
+            - tag_name: app.annotation.service.namespace
+              key: instrumentation.opentelemetry.io/service.namespace
+              from: pod
+            - tag_name: app.annotation.service.name
+              key: instrumentation.opentelemetry.io/service.name
+              from: pod
+        pod_association:
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.uid
+          - sources:
+              - from: resource_attribute
+                name: k8s.pod.name
+          - sources:
+              - from: connection
+      resourcedetection/gcp:
+        detectors: [env]
+        timeout: 2s
+        override: false
+      resource/kind:
+        attributes:
+          - key: k8s.cluster.name
+            value: k3d-enablement
+            action: insert
+      transform/dynatrace-k8s:
+        error_mode: ignore
+        trace_statements:
+          - context: resource
+            statements:
+              - merge_maps(attributes, ParseJSON(attributes["metadata.dynatrace.com"]), "upsert") where IsMatch(attributes["metadata.dynatrace.com"], "^\\{")
+              - delete_key(attributes, "metadata.dynatrace.com")
+              - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.kind"], "daemonset") where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "statefulset") where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "deployment") where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "replicaset") where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "cronjob") where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "job") where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["dt.kubernetes.workload.name"], attributes["k8s.workload.name"]) where IsString(attributes["k8s.workload.name"])
+              - set(attributes["dt.kubernetes.workload.kind"], attributes["k8s.workload.kind"]) where IsString(attributes["k8s.workload.kind"])
+        metric_statements:
+          - context: resource
+            statements:
+              - merge_maps(attributes, ParseJSON(attributes["metadata.dynatrace.com"]), "upsert") where IsMatch(attributes["metadata.dynatrace.com"], "^\\{")
+              - delete_key(attributes, "metadata.dynatrace.com")
+              - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.kind"], "daemonset") where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "statefulset") where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "deployment") where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "replicaset") where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "cronjob") where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "job") where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["dt.kubernetes.workload.name"], attributes["k8s.workload.name"]) where IsString(attributes["k8s.workload.name"])
+              - set(attributes["dt.kubernetes.workload.kind"], attributes["k8s.workload.kind"]) where IsString(attributes["k8s.workload.kind"])
+        log_statements:
+          - context: resource
+            statements:
+              - merge_maps(attributes, ParseJSON(attributes["metadata.dynatrace.com"]), "upsert") where IsMatch(attributes["metadata.dynatrace.com"], "^\\{")
+              - delete_key(attributes, "metadata.dynatrace.com")
+              - set(attributes["k8s.workload.name"], attributes["k8s.daemonset.name"]) where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.statefulset.name"]) where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.deployment.name"]) where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.replicaset.name"]) where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.cronjob.name"]) where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.name"], attributes["k8s.job.name"]) where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.name"] == nil
+              - set(attributes["k8s.workload.kind"], "daemonset") where IsString(attributes["k8s.daemonset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "statefulset") where IsString(attributes["k8s.statefulset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "deployment") where IsString(attributes["k8s.deployment.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "replicaset") where IsString(attributes["k8s.replicaset.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "cronjob") where IsString(attributes["k8s.cronjob.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["k8s.workload.kind"], "job") where IsString(attributes["k8s.job.name"]) and attributes["k8s.workload.kind"] == nil
+              - set(attributes["dt.kubernetes.workload.name"], attributes["k8s.workload.name"]) where IsString(attributes["k8s.workload.name"])
+              - set(attributes["dt.kubernetes.workload.kind"], attributes["k8s.workload.kind"]) where IsString(attributes["k8s.workload.kind"])
+      resource:
+        attributes:
+          - key: k8s.pod.ip
+            action: delete
+          - key: telemetry.sdk.name
+            value: opentelemetry
+            action: insert
+          - key: dynatrace.otel.collector
+            value: astronomy-shop-otelcol
+            action: insert
+          - key: dt.security_context
+            from_attribute: k8s.cluster.name
+            action: insert
+          - key: service.instance.id
+            from_attribute: k8s.pod.uid
+            action: insert
+      filter/histogram:
+        error_mode: ignore
+        metrics:
+          metric:
+            - 'type == METRIC_DATA_TYPE_HISTOGRAM'
+      cumulativetodelta: {}
+
+    connectors:
+      spanmetrics: {}
+
+    service:
+      pipelines:
+        traces:
+          receivers: [otlp]
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [spanmetrics, otlphttp/bindplane]
+        metrics:
+          receivers: [httpcheck/frontendproxy, otlp, spanmetrics]
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [otlphttp/bindplane]
+        metrics/collector-health:
+          receivers: [prometheus]
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, filter/histogram, cumulativetodelta, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [otlphttp/bindplane]
+        logs:
+          processors: [memory_limiter, k8sattributes, resourcedetection/gcp, resource/kind, transform/dynatrace-k8s, resource, batch]
+          exporters: [otlphttp/bindplane]
+
